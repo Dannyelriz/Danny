@@ -1,0 +1,23 @@
+# Dockerfile.go
+# Builds and runs ONLY the Go bot (main.go). This deliberately copies
+# just the Go-related files, so it ignores notif.py, requirement.txt,
+# and everything else sitting in the same repo root.
+
+FROM golang:1.22-alpine AS build
+WORKDIR /app
+
+# Copy just the Go module files first so dependency downloads get
+# cached even when main.go changes later (faster rebuilds).
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Now copy the Go source and your config, and build the binary.
+COPY main.go config.json ./
+RUN go build -o bot main.go
+
+# Smaller final image — just the compiled binary, not the whole Go toolchain.
+FROM alpine:latest
+WORKDIR /app
+COPY --from=build /app/bot /app/config.json ./
+
+CMD ["./bot"]

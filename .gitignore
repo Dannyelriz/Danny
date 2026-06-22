@@ -1,0 +1,16 @@
+# Secret Environment Variables
+.env
+
+# Python Cache & Virtual Environments
+__pycache__/
+*.pyc
+.venv/
+env/
+
+# Go Binary Executables & Logs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
