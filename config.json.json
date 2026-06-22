@@ -1,0 +1,16 @@
+{
+  "watch_all": false,
+  "ignore_bots": true,
+  "guilds": {
+    "1516878042730070227": {
+      "enabled": true,
+      "channel_id": "1517515433660383262",
+      "label": ""
+    },
+    "978714252934258779": {
+      "enabled": true,
+      "channel_id": "1517515433660383262",
+      "label": ""
+    }
+  }
+}

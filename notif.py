@@ -36,7 +36,7 @@ async def launch_selfbot(token, webhook_url):
 
     @bot.event
     async def on_ready():
-        print(f"🟢 Active Connection: {bot.user.name} (Monitoring servers)")
+        print(f"🟢 Scout Active: {bot.user.name} (Forwarding joins to Go Bridge)")
 
     @bot.event
     async def on_member_join(member):
@@ -50,35 +50,19 @@ async def launch_selfbot(token, webhook_url):
         # Lock the event so no other account duplicates it
         ALREADY_LOGGED.add(unique_event_key)
 
-        # Format a clean rich embed for the webhook destination
+        # Pack the raw data to send to your Go bot locally
         payload = {
-            "embeds": [
-                {
-                    "title": "📥 New Member Joined!",
-                    "description": f"Welcome {member.mention} to the server!",
-                    "color": 10181046,  # Vibrant Purple accent line (Decimal for #9B59B6)
-                    
-                    # 👇 This pulls their Discord profile picture and displays it on the right side
-                    "thumbnail": {
-                        "url": str(member.display_avatar.url)
-                    },
-                    
-                    "fields": [
-                        {"name": "Username", "value": f"{member.name}", "inline": True},
-                        {"name": "Account Age", "value": f"{member.created_at.strftime('%Y-%m-%d')}", "inline": True},
-                        {"name": "Server Source", "value": f"{member.guild.name}", "inline": False}
-                    ],
-                    "footer": {
-                        "text": f"Logged via account handler: {bot.user.name}"
-                    }
-                }
-            ]
+            "username": member.name,
+            "user_id": str(member.id),
+            "avatar_url": str(member.display_avatar.url),
+            "guild_name": member.guild.name
         }
-        
+
         try:
-            requests.post(webhook_url, json=payload)
+            # Send the data instantly to your main Go bot running on port 8080
+            requests.post("http://127.0.0.1:8080/join-log", json=payload)
         except Exception as e:
-            print(f"[{bot.user.name}] Error firing webhook response: {e}")
+            print(f"[{bot.user.name}] Failed to forward data to Go bot bridge: {e}")
 
         # Let the background task wait 10 seconds before freeing memory cache
         await asyncio.sleep(10)
@@ -90,11 +74,8 @@ async def launch_selfbot(token, webhook_url):
         print(f"❌ Failed to log in with token [...{token[-8:]}]: {e}")
 
 async def main():
-    # Fixed the variable check name matching to BOT_CONFIGS
     if not BOT_CONFIGS:
         print("❌ CRITICAL: No valid token-webhook configurations were loaded!")
-        print(f"Raw string read from environment: '{CONFIG_RAW}'")
-        print("Please check that your .env file is in this folder and contains BOT_CONFIG=token|url")
         return
         
     print(f"🟢 Loaded {len(BOT_CONFIGS)} dedicated pair(s). Launching concurrent connection loops...")
@@ -105,6 +86,5 @@ async def main():
         for config in BOT_CONFIGS
     ))
 
-# Fixed with proper dunder naming and straight programming quotes
 if __name__ == "__main__":
     asyncio.run(main())
