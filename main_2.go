@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -31,10 +32,11 @@ type GuildConfig struct {
 
 // JoinEvent handles incoming HTTP payloads sent from your Python scripts
 type JoinEvent struct {
-	Username  string `json:"username"`
-	UserID    string `json:"user_id"`
-	AvatarURL string `json:"avatar_url"`
-	GuildName string `json:"guild_name"`
+	Username      string `json:"username"`
+	UserID        string `json:"user_id"`
+	AvatarURL     string `json:"avatar_url"`
+	GuildName     string `json:"guild_name"`
+	TargetWebhook string `json:"target_webhook"`
 }
 
 func defaultConfig() *Config {
@@ -62,7 +64,7 @@ func loadConfig(path string) (*Config, error) {
 		if wErr := os.WriteFile(path, out, 0o600); wErr != nil {
 			return nil, fmt.Errorf("write default config: %w", wErr)
 		}
-		log.Printf("No config found at %s, created a template.", path)
+		log.Printf("[INFO] No config found at %s, created a template.", path)
 		return cfg, nil
 	}
 	if err != nil {
@@ -89,9 +91,13 @@ func (c *Config) watched(guildID string) (GuildConfig, bool) {
 	return GuildConfig{}, false
 }
 
-
 // startLocalBridge starts the HTTP server that catches logs from your Python scripts
 func startLocalBridge(dg *discordgo.Session, targetUserIDs []string) {
+	// Create an HTTP client with a strict timeout to prevent hangs
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
 	http.HandleFunc("/join-log", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -100,6 +106,7 @@ func startLocalBridge(dg *discordgo.Session, targetUserIDs []string) {
 
 		var event JoinEvent
 		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			log.Printf("[ERROR] Failed to decode JSON from Python: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -118,25 +125,70 @@ func startLocalBridge(dg *discordgo.Session, targetUserIDs []string) {
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}
 
+		// ROUTE A: Targeted Webhook Routing
+		if event.TargetWebhook != "" {
+			// Acknowledge instantly so Python can close the connection
+			w.WriteHeader(http.StatusOK)
+
+			// Process the webhook network request asynchronously
+			go func(webhook string, e JoinEvent, emb *discordgo.MessageEmbed) {
+				payload := map[string]interface{}{
+					"embeds": []interface{}{emb},
+				}
+				body, mErr := json.Marshal(payload)
+				if mErr != nil {
+					log.Printf("[ERROR] Failed to marshal webhook payload: %v", mErr)
+					return
+				}
+
+				resp, hErr := httpClient.Post(webhook, "application/json", bytes.NewReader(body))
+				if hErr != nil {
+					log.Printf("[ERROR] Failed to POST to webhook: %v", hErr)
+					return
+				}
+				defer resp.Body.Close()
+
+				// Grab the last 8 characters of the webhook for clean logging
+				shortHook := "unknown"
+				if len(webhook) > 8 {
+					shortHook = webhook[len(webhook)-8:]
+				}
+
+				if resp.StatusCode >= 300 {
+					log.Printf("[WARN] Webhook [...%s] returned non-OK status: %d", shortHook, resp.StatusCode)
+				} else {
+					log.Printf("[INFO] Routed join alert for %s -> Webhook [...%s]", e.Username, shortHook)
+				}
+			}(event.TargetWebhook, event, embed)
+			
+			return
+		}
+
+		// ROUTE B: Fallback DM Routing
 		msgSend := &discordgo.MessageSend{
 			Embeds: []*discordgo.MessageEmbed{embed},
 		}
-
-		for _, userID := range targetUserIDs {
-			userID = strings.TrimSpace(strings.ReplaceAll(userID, "\r", ""))
-			if userID == "" {
-				continue
-			}
-			dmChannel, err := dg.UserChannelCreate(userID)
-			if err == nil {
-				_, sErr := dg.ChannelMessageSendComplex(dmChannel.ID, msgSend)
-				if sErr != nil {
-					log.Printf("[ERROR] Bridge failed to send DM to %s: %v", userID, sErr)
+		
+		go func(targets []string, msg *discordgo.MessageSend) {
+			for _, userID := range targets {
+				userID = strings.TrimSpace(strings.ReplaceAll(userID, "\r", ""))
+				if userID == "" {
+					continue
 				}
-			} else {
-				log.Printf("[ERROR] Bridge failed to open DM for %s: %v", userID, err)
+				dmChannel, err := dg.UserChannelCreate(userID)
+				if err == nil {
+					_, sErr := dg.ChannelMessageSendComplex(dmChannel.ID, msg)
+					if sErr != nil {
+						log.Printf("[ERROR] Bridge failed to send DM to %s: %v", userID, sErr)
+					} else {
+						log.Printf("[INFO] Sent DM alert to global target: %s", userID)
+					}
+				} else {
+					log.Printf("[ERROR] Bridge failed to open DM for %s: %v", userID, err)
+				}
 			}
-		}
+		}(targetUserIDs, msgSend)
+
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -177,7 +229,7 @@ func main() {
 	}
 
 	dg.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		log.Printf("[READY] Logged in as: %s#%s", r.User.Username, r.User.Discriminator)
+		log.Printf("[READY] Native Go Bot Logged in as: %s#%s", r.User.Username, r.User.Discriminator)
 	})
 
 	dg.AddHandler(func(s *discordgo.Session, m *discordgo.GuildMemberAdd) {
@@ -197,7 +249,7 @@ func main() {
 		}
 
 		embed := &discordgo.MessageEmbed{
-			Title:       "📥 New Member Joined!",
+			Title:       "📥 New Member Joined! (Native)",
 			URL:         fmt.Sprintf("https://discord.com/users/%s", m.User.ID),
 			Description: fmt.Sprintf("👤 **%s**", userTag),
 			Color:       0x8757F2,
@@ -240,7 +292,7 @@ func main() {
 	if err := dg.Open(); err != nil {
 		log.Fatalf("Error opening connection: %v", err)
 	}
-	log.Println("[INFO] Bot is now running. Press CTRL-C to exit.")
+	log.Println("[INFO] Go Bridge is now running. Press CTRL-C to exit.")
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM)

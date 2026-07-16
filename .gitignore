@@ -6,11 +6,18 @@ __pycache__/
 *.pyc
 .venv/
 env/
+venv/
 
-# Go Binary Executables & Logs
+# Go Binary Executables, Configs & Logs
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 dist/
+bridge
+config.json
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
