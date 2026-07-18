@@ -1,11 +1,4 @@
-<<<<<<< HEAD
 discord.py-self
 python-dotenv
 requests
 aiohttp
-=======
-discord.py-self
-python-dotenv
-requests
-aiohttp
->>>>>>> bc7d6b2534463a3e6fd6644614cab2489e1b2342
