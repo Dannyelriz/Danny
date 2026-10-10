@@ -32,11 +32,12 @@ type GuildConfig struct {
 
 // JoinEvent handles incoming HTTP payloads sent from your Python scripts
 type JoinEvent struct {
-	Username      string `json:"username"`
-	UserID        string `json:"user_id"`
-	AvatarURL     string `json:"avatar_url"`
-	GuildName     string `json:"guild_name"`
-	TargetWebhook string `json:"target_webhook"`
+	Username      string   `json:"username"`
+	UserID        string   `json:"user_id"`
+	AvatarURL     string   `json:"avatar_url"`
+	GuildName     string   `json:"guild_name"`
+	TargetWebhook string   `json:"target_webhook"`
+	AdminIDs      []string `json:"admin_ids"`
 }
 
 func defaultConfig() *Config {
@@ -125,16 +126,35 @@ func startLocalBridge(dg *discordgo.Session, targetUserIDs []string) {
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}
 
-		// ROUTE A: Targeted Webhook Routing
+		// // ROUTE A: Targeted Webhook Routing
 		if event.TargetWebhook != "" {
 			// Acknowledge instantly so Python can close the connection
 			w.WriteHeader(http.StatusOK)
 
 			// Process the webhook network request asynchronously
 			go func(webhook string, e JoinEvent, emb *discordgo.MessageEmbed) {
-				payload := map[string]interface{}{
-					"embeds": []interface{}{emb},
+
+				// 1. Build the mention string dynamically from the slice of AdminIDs
+				var mentionBuilder strings.Builder
+				for _, id := range e.AdminIDs {
+					mentionBuilder.WriteString(fmt.Sprintf("<@%s> ", id))
 				}
+
+				// 2. Format the final text content above the embed
+				content := ""
+				if len(e.AdminIDs) > 0 {
+					content = fmt.Sprintf("%s\nNew member joined **%s**!", strings.TrimSpace(mentionBuilder.String()), e.GuildName)
+				}
+
+				// 3. Inject content and allowed_mentions alongside your existing embed
+				payload := map[string]interface{}{
+					"content": content,
+					"embeds":  []interface{}{emb},
+					"allowed_mentions": map[string]interface{}{
+						"parse": []string{"users"}, // Forces push notification for tags
+					},
+				}
+
 				body, mErr := json.Marshal(payload)
 				if mErr != nil {
 					log.Printf("[ERROR] Failed to marshal webhook payload: %v", mErr)
@@ -160,7 +180,7 @@ func startLocalBridge(dg *discordgo.Session, targetUserIDs []string) {
 					log.Printf("[INFO] Routed join alert for %s -> Webhook [...%s]", e.Username, shortHook)
 				}
 			}(event.TargetWebhook, event, embed)
-			
+
 			return
 		}
 
@@ -168,7 +188,7 @@ func startLocalBridge(dg *discordgo.Session, targetUserIDs []string) {
 		msgSend := &discordgo.MessageSend{
 			Embeds: []*discordgo.MessageEmbed{embed},
 		}
-		
+
 		go func(targets []string, msg *discordgo.MessageSend) {
 			for _, userID := range targets {
 				userID = strings.TrimSpace(strings.ReplaceAll(userID, "\r", ""))

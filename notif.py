@@ -7,8 +7,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 CONFIG_RAW = os.getenv("BOT_CONFIG", "")
-# Added dynamic BRIDGE_URL with a localhost fallback for easy local testing[cite: 2]
+# Added dynamic BRIDGE_URL with a localhost fallback for easy local testing
 BRIDGE_URL = os.getenv("BRIDGE_URL", "http://127.0.0.1:8080/join-log")
+
+# Pull target admin IDs from the environment and parse into a list of strings
+ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [x.strip() for x in ADMIN_IDS_RAW.split(",") if x.strip()]
 
 ALREADY_LOGGED = set()
 
@@ -54,12 +58,13 @@ async def launch_selfbot(token, webhook_url):
             "user_id": str(member.id),
             "avatar_url": str(member.display_avatar.url) if member.display_avatar else "",
             "guild_name": member.guild.name,
-            "target_webhook": webhook_url
+            "target_webhook": webhook_url,
+            "admin_ids": ADMIN_IDS # Injects the list of IDs for the Go bridge to process
         }
 
         try:
             async with aiohttp.ClientSession() as session:
-                # Swapped hardcoded localhost to the BRIDGE_URL variable[cite: 2]
+                # Swapped hardcoded localhost to the BRIDGE_URL variable
                 async with session.post(BRIDGE_URL, json=payload) as response:
                     if response.status != 200:
                         print(f"[{bot.user.name}] ⚠️ Go bridge returned code: {response.status}")
